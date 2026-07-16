@@ -129,5 +129,43 @@ code: `code/run_mutect2.sh`
 
 usage:
 ```bash
-bash code/run_mutect2.sh tumor_id ./data/bam/tumor.bam ./results/mutect2/tumor
+bash code/run_mutect2.sh tumor_id ./data/bam/tumor.bam ./results/mutect2/tumor \
+  ./data/mutect2/chip_whitelist.tsv
+```
+
+The clonal hematopoiesis workflow uses Mutect2 tumor-only calling with a cohort-matched germline resource, followed by PASS extraction and candidate-level depth and allele-fraction filtering. Candidate variants are retained when they pass DP, AD, AF, and biallelic-site filters.
+
+After ANNOVAR gene annotation, coding and splicing candidates are filtered separately because ANNOVAR writes them to different files. A single whitelist table is used to derive both matching formats: `gene:transcript` patterns for `exonic_variant_function`, and transcript ID patterns for `variant_function`.
+
+Whitelist format:
+```text
+gene_symbol	transcript_id	category
+DNMT3A	NM_022552	CH_driver
+TET2	NM_001127208	CH_driver
+ASXL1	NM_015338	CH_driver
+PPM1D	NM_003620	CH_driver
+```
+
+For exonic records, the script matches entries such as `ASXL1:NM_015338`. For splicing or other non-exonic records, the script matches transcript IDs such as `NM_015338`.
+
+The final candidate damaging set combines:
+```text
+stopgain
+nonsynonymous SNV
+frameshift insertion
+frameshift deletion
+frameshift block substitution
+splicing
+```
+
+Main outputs:
+```bash
+./results/mutect2/tumor.candidate.vcf.gz
+./results/mutect2/tumor.annovar.exonic_variant_function
+./results/mutect2/tumor.annovar.variant_function
+./results/mutect2/tumor.exonic.whitelist.txt
+./results/mutect2/tumor.splicing.whitelist.txt
+./results/mutect2/tumor.exonic.damage.txt
+./results/mutect2/tumor.splicing.damage.txt
+./results/mutect2/tumor.damage.txt
 ```

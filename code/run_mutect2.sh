@@ -17,10 +17,11 @@ annovar_db=./database/annovar/humandb
 tumor_id=$1
 tumor_bam=$2
 out_prefix=$3
-gene_symbol_list=${4:-./data/mutect2/gene_symbols.txt}
-gene_transcript_list=${5:-./data/mutect2/gene_transcripts.txt}
+whitelist_table=${4:-./data/mutect2/chip_whitelist.tsv}
 
 mkdir -p $(dirname ${out_prefix})
+tmpdir=$(dirname ${out_prefix})/tmp
+mkdir -p ${tmpdir}
 
 ### Mutect2
 ${gatk} Mutect2 \
@@ -54,10 +55,10 @@ ${tabix} -f ${out_prefix}.pass.vcf.gz
 
 ${bcftools} view -i 'INFO/DP>30' ${out_prefix}.pass.vcf.gz \
   | ${bcftools} filter -i 'FMT/AD[1]>5 & FMT/AF[0]>0.02' \
-  | ${bcftools} view -m2 -M2 -Oz -o ${out_prefix}.filtered.dp30.vcf.gz
-${tabix} -f ${out_prefix}.filtered.dp30.vcf.gz
+  | ${bcftools} view -m2 -M2 -Oz -o ${out_prefix}.candidate.vcf.gz
+${tabix} -f ${out_prefix}.candidate.vcf.gz
 
-${bcftools} view -H ${out_prefix}.filtered.dp30.vcf.gz \
+${bcftools} view -H ${out_prefix}.candidate.vcf.gz \
   | awk 'BEGIN{OFS="\t"} {print $1, $2, $2, $4, $5, "VCF"}' \
   > ${out_prefix}.avinput
 
@@ -67,16 +68,28 @@ ${annovar} ${out_prefix}.avinput ${annovar_db} \
   -geneanno \
   -dbtype refGene
 
-while read -r gene; do
-  grep ${gene} ${out_prefix}.annovar.exonic_variant_function >> ${out_prefix}.exonic.gene.txt || true
-done < ${gene_symbol_list}
+awk 'BEGIN{FS=OFS="\t"} NR>1 && $1 != "" && $2 != "" {print $1 ":" $2}' \
+  ${whitelist_table} > ${tmpdir}/exonic_patterns.txt
+awk 'BEGIN{FS=OFS="\t"} NR>1 && $2 != "" {print $2}' \
+  ${whitelist_table} > ${tmpdir}/transcript_patterns.txt
 
-while read -r transcript; do
-  grep ${transcript} ${out_prefix}.annovar.variant_function >> ${out_prefix}.variant.gene.txt || true
-done < ${gene_transcript_list}
+grep -F -f ${tmpdir}/exonic_patterns.txt \
+  ${out_prefix}.annovar.exonic_variant_function \
+  > ${out_prefix}.exonic.whitelist.txt || true
+
+grep -F -f ${tmpdir}/transcript_patterns.txt \
+  ${out_prefix}.annovar.variant_function \
+  > ${out_prefix}.splicing.whitelist.txt || true
 
 awk -F'\t' '$2 ~ /stopgain|nonsynonymous SNV|frameshift insertion|frameshift deletion|frameshift block substitution/' \
-  ${out_prefix}.exonic.gene.txt >> ${out_prefix}.damage.txt
+  ${out_prefix}.exonic.whitelist.txt \
+  > ${out_prefix}.exonic.damage.txt
 
 awk -F'\t' '$1 ~ /splicing/' \
-  ${out_prefix}.variant.gene.txt >> ${out_prefix}.damage.txt
+  ${out_prefix}.splicing.whitelist.txt \
+  > ${out_prefix}.splicing.damage.txt
+
+awk 'BEGIN{OFS="\t"} {print "exonic", $0}' ${out_prefix}.exonic.damage.txt \
+  > ${out_prefix}.damage.txt
+awk 'BEGIN{OFS="\t"} {print "splicing", $0}' ${out_prefix}.splicing.damage.txt \
+  >> ${out_prefix}.damage.txt
